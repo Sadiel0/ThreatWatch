@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ThreatWatch — SOC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #050810;
+      --bg-panel:   #080d1a;
+      --bg-card:    #0b1120;
+      --border:     #0e1f3d;
+      --border-bright: #1a3a6e;
+      --cyan:       #00e5ff;
+      --cyan-dim:   #0099bb;
+      --cyan-glow:  rgba(0, 229, 255, 0.15);
+      --blue:       #0057ff;
+      --red:        #ff3060;
+      --red-dim:    #991a38;
+      --orange:     #ff8c00;
+      --yellow:     #ffd600;
+      --green:      #00e676;
+      --text:       #c8d8f0;
+      --text-dim:   #5a6e8a;
+      --text-bright:#e8f4ff;
+      --mono:       'Share Tech Mono', monospace;
+      --head:       'Rajdhani', sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* Scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px
+      );
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-rows: 52px 1fr 36px;
+      grid-template-columns: 1fr;
+      height: 100vh;
+      gap: 0;
+    }
+
+    #topbar {
+      grid-row: 1;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 20px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-bright);
+      box-shadow: 0 0 20px rgba(0, 87, 255, 0.1);
+    }
+
+    #main-grid {
+      grid-row: 2;
+      display: grid;
+      grid-template-columns: 320px 1fr 280px;
+      gap: 1px;
+      background: var(--border);
+      overflow: hidden;
+    }
+
+    #bottombar {
+      grid-row: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .panel {
+      background: var(--bg-panel);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-family: var(--head);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--cyan);
+    }
+
+    .panel-count {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* ── Top Bar ──────────────────────────────────────────────────── */
+    #logo {
+      font-family: var(--head);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--cyan);
+      text-shadow: 0 0 12px var(--cyan);
+      white-space: nowrap;
+      margin-right: 8px;
+    }
+
+    #logo span { color: var(--text-dim); font-weight: 400; }
+
+    .divider { width: 1px; height: 28px; background: var(--border-bright); flex-shrink: 0; }
+
+    #severity-counts {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .sev-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .sev-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .sev-dot.critical { background: var(--red); box-shadow: 0 0 6px var(--red); }
+    .sev-dot.high     { background: var(--orange); }
+    .sev-dot.medium   { background: var(--yellow); }
+    .sev-dot.low      { background: var(--green); }
+
+    .sev-label { color: var(--text-dim); }
+    .sev-val   { color: var(--text-bright); font-weight: bold; min-width: 24px; }
+
+    #system-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse-anim 2s ease-in-out infinite;
+    }
+
+    .pulse-dot.offline { background: var(--red); animation: none; }
+
+    @keyframes pulse-anim {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(0, 230, 118, 0); }
+    }
+
+    /* ── IOC Feed (Left Panel) ────────────────────────────────────── */
+    #ioc-feed {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    #ioc-feed::-webkit-scrollbar { width: 4px; }
+    #ioc-feed::-webkit-scrollbar-track { background: transparent; }
+    #ioc-feed::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+    .ioc-item {
+      display: grid;
+      grid-template-columns: 54px 1fr auto;
+      align-items: start;
+      gap: 8px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: default;
+      transition: background 0.15s;
+      animation: slide-in 0.3s ease-out;
+    }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .ioc-item:hover { background: rgba(0, 229, 255, 0.03); }
+
+    .sev-badge {
+      font-family: var(--head);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 2px 5px;
+      border-radius: 2px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: rgba(255,48,96,0.2); color: var(--red); border: 1px solid var(--red-dim); }
+    .sev-badge.high     { background: rgba(255,140,0,0.15); color: var(--orange); border: 1px solid rgba(255,140,0,0.3); }
+    .sev-badge.medium   { background: rgba(255,214,0,0.1); color: var(--yellow); border: 1px solid rgba(255,214,0,0.25); }
+    .sev-badge.low      { background: rgba(0,230,118,0.1); color: var(--green); border: 1px solid rgba(0,230,118,0.25); }
+
+    .ioc-main { min-width: 0; }
+
+    .ioc-ip {
+      font-size: 13px;
+      color: var(--text-bright);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .ioc-ip.pulse-name {
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .ioc-meta {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .ioc-source {
+      font-size: 10px;
+      color: var(--cyan-dim);
+      white-space: nowrap;
+    }
+
+    /* ── Kill Chain (Center) ──────────────────────────────────────── */
+    #center-panel { background: var(--bg-panel); display: flex; flex-direction: column; overflow: hidden; }
+
+    #killchain-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 20px 24px;
+      gap: 0;
+    }
+
+    #killchain-pipe {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      width: 100%;
+    }
+
+    .kc-stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+    }
+
+    /* Arrow connector between stages */
+    .kc-stage:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      right: -1px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-top: 18px solid transparent;
+      border-bottom: 18px solid transparent;
+      border-left: 12px solid var(--border);
+      z-index: 2;
+    }
+
+    .kc-stage:not(:last-child)::before {
+      content: '';
+      position: absolute;
+      right: -2px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-top: 19px solid transparent;
+      border-bottom: 19px solid transparent;
+      border-left: 13px solid var(--border);
+      z-index: 1;
+    }
+
+    .kc-box {
+      width: 100%;
+      padding: 14px 6px;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s, border-color 0.2s;
+      min-height: 90px;
+      justify-content: center;
+    }
+
+    .kc-stage:first-child .kc-box { border-left: 1px solid var(--border); border-radius: 4px 0 0 4px; }
+    .kc-stage:last-child .kc-box  { border-right: 1px solid var(--border); border-radius: 0 4px 4px 0; }
+
+    .kc-box.active {
+      background: rgba(0, 229, 255, 0.06);
+      border-top-color: var(--cyan-dim);
+      border-bottom-color: var(--cyan-dim);
+    }
+
+    .kc-box.active-critical {
+      background: rgba(255, 48, 96, 0.07);
+      border-top-color: var(--red-dim);
+      border-bottom-color: var(--red-dim);
+    }
+
+    .kc-num {
+      font-family: var(--head);
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-dim);
+    }
+
+    .kc-box.active .kc-num          { color: var(--cyan); text-shadow: 0 0 10px var(--cyan-glow); }
+    .kc-box.active-critical .kc-num { color: var(--red); text-shadow: 0 0 10px rgba(255,48,96,0.3); }
+
+    .kc-label {
+      font-family: var(--head);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      text-align: center;
+      line-height: 1.3;
+    }
+
+    .kc-box.active .kc-label          { color: var(--cyan-dim); }
+    .kc-box.active-critical .kc-label { color: var(--red); }
+
+    #killchain-legend {
+      padding: 12px 24px 20px;
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .kc-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .kc-legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    /* Center bottom: recent tags */
+    #recent-tags {
+      padding: 10px 24px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      max-height: 70px;
+      overflow: hidden;
+    }
+
+    .tag-chip {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 2px;
+      background: rgba(0, 87, 255, 0.12);
+      color: var(--cyan-dim);
+      border: 1px solid rgba(0, 87, 255, 0.25);
+      animation: fade-in 0.4s ease;
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; } to { opacity: 1; }
+    }
+
+    /* ── MITRE Panel (Right) ──────────────────────────────────────── */
+    #mitre-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+
+    #mitre-list::-webkit-scrollbar { width: 4px; }
+    #mitre-list::-webkit-scrollbar-track { background: transparent; }
+    #mitre-list::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+    .mitre-row {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      animation: fade-in 0.3s ease;
+    }
+
+    .mitre-tactic {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 5px;
+    }
+
+    .mitre-name {
+      font-family: var(--head);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    .mitre-count {
+      font-size: 12px;
+      color: var(--cyan);
+    }
+
+    .mitre-bar-track {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .mitre-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+      transition: width 0.6s ease;
+    }
+
+    .mitre-unknown .mitre-bar-fill { background: var(--text-dim); }
+    .mitre-unknown .mitre-name     { color: var(--text-dim); }
+    .mitre-unknown .mitre-count    { color: var(--text-dim); }
+
+    /* ── Loading / Error States ───────────────────────────────────── */
+    .state-msg {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex: 1;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+
+    .state-msg .icon {
+      font-size: 28px;
+      opacity: 0.4;
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border-bright);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Bottom Bar ───────────────────────────────────────────────── */
+    .feed-status {
+      display: flex;
+      gap: 16px;
+    }
+
+    .feed-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .feed-pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    .feed-pill-dot.offline { background: var(--red); }
+    .feed-pill-dot.loading { background: var(--yellow); animation: pulse-anim 1s ease infinite; }
+
+    .ts { color: var(--text-dim); }
+    .ts span { color: var(--cyan-dim); }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Top Bar ──────────────────────────────────────────────────── -->
+  <header id="topbar">
+    <div id="logo">THREAT<span>WATCH</span></div>
+    <div class="divider"></div>
+    <div id="severity-counts">
+      <div class="sev-chip">
+        <div class="sev-dot critical"></div>
+        <span class="sev-label">CRIT</span>
+        <span class="sev-val" id="cnt-critical">—</span>
+      </div>
+      <div class="sev-chip">
+        <div class="sev-dot high"></div>
+        <span class="sev-label">HIGH</span>
+        <span class="sev-val" id="cnt-high">—</span>
+      </div>
+      <div class="sev-chip">
+        <div class="sev-dot medium"></div>
+        <span class="sev-label">MED</span>
+        <span class="sev-val" id="cnt-medium">—</span>
+      </div>
+      <div class="sev-chip">
+        <div class="sev-dot low"></div>
+        <span class="sev-label">LOW</span>
+        <span class="sev-val" id="cnt-low">—</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div id="system-status">
+      <div class="status-pill" id="status-abuseipdb">
+        <div class="pulse-dot" id="dot-abuseipdb"></div>
+        <span>AbuseIPDB</span>
+      </div>
+      <div class="status-pill" id="status-otx">
+        <div class="pulse-dot" id="dot-otx"></div>
+        <span>OTX</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main Grid ─────────────────────────────────────────────────── -->
+  <div id="main-grid">
+
+    <!-- Left: IOC Feed -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Live IOC Feed</span>
+        <span class="panel-count" id="ioc-count">0 indicators</span>
+      </div>
+      <div id="ioc-feed">
+        <div class="state-msg" id="ioc-loading">
+          <div class="spinner"></div>
+          <span>Fetching indicators...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center: Kill Chain -->
+    <div id="center-panel">
+      <div class="panel-header">
+        <span class="panel-title">Kill Chain Analysis</span>
+        <span class="panel-count" id="kc-total">—</span>
+      </div>
+      <div id="killchain-wrap">
+        <div id="killchain-pipe">
+          <!-- stages rendered by JS -->
+        </div>
+      </div>
+      <div id="killchain-legend">
+        <div class="kc-legend-item">
+          <div class="kc-legend-swatch" style="background:rgba(0,229,255,0.4)"></div>
+          <span>Active</span>
+        </div>
+        <div class="kc-legend-item">
+          <div class="kc-legend-swatch" style="background:rgba(255,48,96,0.5)"></div>
+          <span>Critical threats present</span>
+        </div>
+        <div class="kc-legend-item">
+          <div class="kc-legend-swatch" style="background:var(--bg-card)"></div>
+          <span>No activity</span>
+        </div>
+      </div>
+      <div id="recent-tags"></div>
+    </div>
+
+    <!-- Right: MITRE ATT&CK -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">MITRE ATT&amp;CK</span>
+        <span class="panel-count" id="mitre-count">—</span>
+      </div>
+      <div id="mitre-list">
+        <div class="state-msg" id="mitre-loading">
+          <div class="spinner"></div>
+          <span>Loading...</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Bottom Bar ───────────────────────────────────────────────── -->
+  <footer id="bottombar">
+    <div class="feed-status">
+      <div class="feed-pill">
+        <div class="feed-pill-dot loading" id="fpd-abuseipdb"></div>
+        <span id="fpl-abuseipdb">AbuseIPDB: connecting</span>
+      </div>
+      <div class="feed-pill">
+        <div class="feed-pill-dot loading" id="fpd-otx"></div>
+        <span id="fpl-otx">OTX: connecting</span>
+      </div>
+    </div>
+    <div class="ts">Last updated: <span id="last-updated">—</span></div>
+    <div class="ts">ThreatWatch v1.0 &nbsp;|&nbsp; <span id="total-indicators">—</span> total indicators</div>
+  </footer>
+
+</div>
+
+<script>
+  const API = 'http://localhost:8000/api';
+
+  const KC_STAGES = [
+    'Reconnaissance', 'Weaponization', 'Delivery',
+    'Exploitation', 'Installation', 'Command & Control', 'Actions on Objectives'
+  ];
+
+  // ── State ────────────────────────────────────────────────────────
+  let state = {
+    threats: [],
+    summary: null,
+    killchain: null,
+    mitre: null,
+    feedStatus: { abuseipdb: 'loading', otx: 'loading' },
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  function el(id) { return document.getElementById(id); }
+
+  function fmt(d) {
+    if (!d) return '—';
+    try { return new Date(d).toLocaleString('en-US', { month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }); }
+    catch { return d; }
+  }
+
+  function nowStr() {
+    return new Date().toLocaleTimeString('en-US', { hour12: false });
+  }
+
+  function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+
+  function escHtml(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Fetch helpers ─────────────────────────────────────────────────
+  async function fetchJSON(path) {
+    const r = await fetch(API + path, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  // ── Render: Top Bar severity counts ──────────────────────────────
+  function renderSeverityCounts(summary) {
+    const sev = summary?.by_severity ?? {};
+    el('cnt-critical').textContent = sev.critical ?? 0;
+    el('cnt-high').textContent     = sev.high     ?? 0;
+    el('cnt-medium').textContent   = sev.medium   ?? 0;
+    el('cnt-low').textContent      = sev.low      ?? 0;
+  }
+
+  // ── Render: IOC Feed ─────────────────────────────────────────────
+  function renderIocFeed(threats) {
+    const feed = el('ioc-feed');
+    el('ioc-loading').style.display = 'none';
+    el('ioc-count').textContent = `${threats.length} indicators`;
+
+    if (threats.length === 0) {
+      feed.innerHTML = '<div class="state-msg"><div class="icon">◈</div><span>No indicators</span></div>';
+      return;
+    }
+
+    // Prepend new items; keep max 200 in DOM
+    const existing = new Set(
+      Array.from(feed.querySelectorAll('.ioc-item')).map(n => n.dataset.id)
+    );
+
+    const newItems = threats
+      .filter(t => !existing.has(t.id))
+      .slice(0, 100);
+
+    for (const t of newItems.reverse()) {
+      const div = document.createElement('div');
+      div.className = 'ioc-item';
+      div.dataset.id = t.id;
+
+      const isIP = t.indicator_type === 'ip';
+      const label = isIP
+        ? escHtml(t.ip_address ?? '—')
+        : escHtml(t.raw?.name ?? 'Unknown pulse');
+      const meta = isIP
+        ? `${escHtml(t.country_code ?? '??')} · score ${t.confidence_score}`
+        : escHtml((t.tags ?? []).slice(0,3).join(', ') || t.raw?.adversary || '—');
+
+      div.innerHTML = `
+        <div class="sev-badge ${t.severity}">${t.severity}</div>
+        <div class="ioc-main">
+          <div class="ioc-ip ${isIP ? '' : 'pulse-name'}">${label}</div>
+          <div class="ioc-meta">${meta}</div>
+        </div>
+        <div class="ioc-source">${escHtml(t.source)}</div>
+      `;
+      feed.insertBefore(div, feed.firstChild);
+    }
+
+    // trim DOM
+    const items = feed.querySelectorAll('.ioc-item');
+    for (let i = 200; i < items.length; i++) items[i].remove();
+  }
+
+  // ── Render: Kill Chain ───────────────────────────────────────────
+  function renderKillchain(kc, threats) {
+    if (!kc) return;
+
+    const pipe = el('killchain-pipe');
+    pipe.innerHTML = '';
+
+    const maxCount = Math.max(1, ...Object.values(kc));
+    const total = Object.values(kc).reduce((a, b) => a + b, 0);
+    el('kc-total').textContent = `${total} mapped`;
+
+    // Count critical per stage from raw threats
+    const critByStage = {};
+    for (const t of threats) {
+      if (t.severity === 'critical') {
+        critByStage[t.kill_chain_stage] = (critByStage[t.kill_chain_stage] ?? 0) + 1;
+      }
+    }
+
+    for (const stage of KC_STAGES) {
+      const count = kc[stage] ?? 0;
+      const hasCrit = (critByStage[stage] ?? 0) > 0;
+      const active = count > 0;
+
+      const stageEl = document.createElement('div');
+      stageEl.className = 'kc-stage';
+
+      const boxClass = hasCrit ? 'kc-box active-critical' : active ? 'kc-box active' : 'kc-box';
+      const shortLabel = stage.replace('Actions on Objectives', 'Act. on Obj.').replace('Command & Control', 'C2');
+
+      stageEl.innerHTML = `
+        <div class="${boxClass}">
+          <div class="kc-num">${count}</div>
+          <div class="kc-label">${shortLabel}</div>
+        </div>
+      `;
+      pipe.appendChild(stageEl);
+    }
+
+    // Render tag cloud from all pulse tags
+    const tagsEl = el('recent-tags');
+    const allTags = threats
+      .flatMap(t => t.tags ?? [])
+      .filter(Boolean);
+    const tagCounts = {};
+    for (const tag of allTags) tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
+    const topTags = Object.entries(tagCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 18)
+      .map(([t]) => t);
+
+    tagsEl.innerHTML = topTags
+      .map(t => `<span class="tag-chip">${escHtml(t)}</span>`)
+      .join('');
+  }
+
+  // ── Render: MITRE ────────────────────────────────────────────────
+  function renderMitre(mitre) {
+    if (!mitre) return;
+
+    const list = el('mitre-list');
+    el('mitre-loading').style.display = 'none';
+    list.innerHTML = '';
+
+    const sorted = Object.entries(mitre)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (sorted.length === 0) {
+      list.innerHTML = '<div class="state-msg"><div class="icon">◈</div><span>No data</span></div>';
+      return;
+    }
+
+    const maxVal = Math.max(1, ...sorted.map(([, v]) => v));
+    const total  = sorted.reduce((a, [, v]) => a + v, 0);
+    el('mitre-count').textContent = `${sorted.length} tactics`;
+
+    for (const [tactic, count] of sorted) {
+      const pct = clamp(Math.round((count / maxVal) * 100), 2, 100);
+      const isUnknown = tactic === 'Unknown';
+      const row = document.createElement('div');
+      row.className = `mitre-row${isUnknown ? ' mitre-unknown' : ''}`;
+      row.innerHTML = `
+        <div class="mitre-tactic">
+          <span class="mitre-name">${escHtml(tactic)}</span>
+          <span class="mitre-count">${count}</span>
+        </div>
+        <div class="mitre-bar-track">
+          <div class="mitre-bar-fill" style="width:${pct}%"></div>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+
+    el('total-indicators').textContent = total;
+  }
+
+  // ── Feed Status ───────────────────────────────────────────────────
+  function setFeedStatus(feed, status) {
+    // feed: 'abuseipdb' | 'otx'
+    // status: 'ok' | 'offline' | 'loading'
+    const dot  = el(`fpd-${feed}`);
+    const lbl  = el(`fpl-${feed}`);
+    const hDot = el(`dot-${feed}`);
+
+    dot.className = `feed-pill-dot ${status === 'ok' ? '' : status}`;
+    hDot.className = `pulse-dot ${status === 'offline' ? 'offline' : ''}`;
+
+    const labels = { ok: 'online', offline: 'OFFLINE', loading: 'connecting' };
+    const names  = { abuseipdb: 'AbuseIPDB', otx: 'OTX' };
+    lbl.textContent = `${names[feed]}: ${labels[status] ?? status}`;
+  }
+
+  // ── Error state ───────────────────────────────────────────────────
+  function showFeedOffline(panelId) {
+    const el2 = el(panelId);
+    el2.innerHTML = `
+      <div class="state-msg">
+        <div class="icon" style="color:var(--red)">⚠</div>
+        <span style="color:var(--red)">Feed Offline</span>
+        <span>Cannot reach ${API}</span>
+      </div>`;
+  }
+
+  // ── Data fetchers ────────────────────────────────────────────────
+  async function loadThreats() {
+    try {
+      const threats = await fetchJSON('/threats');
+      state.threats = threats;
+
+      const hasAbuseIPDB = threats.some(t => t.source === 'AbuseIPDB');
+      const hasOTX       = threats.some(t => t.source === 'AlienVault OTX');
+      setFeedStatus('abuseipdb', hasAbuseIPDB ? 'ok' : 'offline');
+      setFeedStatus('otx',       hasOTX       ? 'ok' : 'offline');
+
+      renderIocFeed(threats);
+      el('last-updated').textContent = nowStr();
+    } catch (err) {
+      console.error('Threats fetch failed:', err);
+      setFeedStatus('abuseipdb', 'offline');
+      setFeedStatus('otx', 'offline');
+      showFeedOffline('ioc-feed');
+    }
+  }
+
+  async function loadSummary() {
+    try {
+      const summary = await fetchJSON('/threats/summary');
+      state.summary = summary;
+      renderSeverityCounts(summary);
+    } catch (err) {
+      console.error('Summary fetch failed:', err);
+    }
+  }
+
+  async function loadKillchain() {
+    try {
+      const kc = await fetchJSON('/threats/killchain');
+      state.killchain = kc;
+      renderKillchain(kc, state.threats);
+    } catch (err) {
+      console.error('Killchain fetch failed:', err);
+    }
+  }
+
+  async function loadMitre() {
+    try {
+      const mitre = await fetchJSON('/threats/mitre');
+      state.mitre = mitre;
+      renderMitre(mitre);
+    } catch (err) {
+      console.error('MITRE fetch failed:', err);
+      showFeedOffline('mitre-list');
+    }
+  }
+
+  // ── Init & polling ───────────────────────────────────────────────
+  async function init() {
+    // Build empty kill chain immediately so layout isn't blank
+    const emptyKC = Object.fromEntries(KC_STAGES.map(s => [s, 0]));
+    renderKillchain(emptyKC, []);
+
+    // Load all in parallel on first paint
+    await Promise.allSettled([loadThreats(), loadSummary(), loadKillchain(), loadMitre()]);
+
+    // Poll threats every 30s
+    setInterval(loadThreats, 30_000);
+
+    // Poll summary/killchain/mitre every 60s
+    setInterval(async () => {
+      await Promise.allSettled([loadSummary(), loadKillchain(), loadMitre()]);
+      renderKillchain(state.killchain, state.threats);
+    }, 60_000);
+  }
+
+  init();
+</script>
+</body>
+</html>
